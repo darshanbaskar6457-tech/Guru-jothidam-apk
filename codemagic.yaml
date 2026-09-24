@@ -11,13 +11,24 @@ workflows:
         script: |
           echo "Files in repo:"
           find . -maxdepth 3 -not -path "./.git/*" -not -path "./node_modules/*" | head -60
-          SRC=$(find . -name index.html -not -path "./node_modules/*" -not -path "./android/*" -not -path "./www/*" | head -1)
+          # if the app was uploaded as a .zip, unpack it
+          mkdir -p /tmp/unz
+          for z in ./*.zip; do
+            if [ -f "$z" ]; then
+              echo "Unzipping $z"
+              unzip -oq "$z" -d /tmp/unz || true
+            fi
+          done
+          SRC=$(find . /tmp/unz -name index.html -not -path "./node_modules/*" -not -path "./android/*" -not -path "./www/*" -not -path "*/__MACOSX/*" | head -1)
+          echo "Found app at: $SRC"
           if [ -n "$SRC" ]; then
             D=$(dirname "$SRC")
             mkdir -p www
-            cp "$D"/index.html "$D"/manifest.webmanifest "$D"/sw.js "$D"/icon-192.png "$D"/icon-512.png www/
+            for f in index.html manifest.webmanifest sw.js icon-192.png icon-512.png; do
+              if [ -f "$D/$f" ]; then cp "$D/$f" www/; fi
+            done
           fi
-          test -f www/index.html || { echo "ERROR: index.html not found in the repo. Upload index.html, manifest.webmanifest, sw.js, icon-192.png, icon-512.png next to codemagic.yaml"; exit 1; }
+          test -f www/index.html || { echo "ERROR: index.html not found in the repo or in any zip"; exit 1; }
           # do not register the service worker inside the app
           sed -i.bak 's|if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js");|if("serviceWorker"in navigator\&\&!window.Capacitor)navigator.serviceWorker.register("sw.js");|' www/index.html
           rm -f www/index.html.bak
