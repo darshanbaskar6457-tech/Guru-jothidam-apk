@@ -1,0 +1,50 @@
+workflows:
+  android-apk:
+    name: Guru Jothidam APK
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      node: latest
+      java: 17
+    scripts:
+      - name: Install dependencies
+        script: npm install
+
+      - name: Check web files are present
+        script: |
+          test -f www/index.html || { echo "ERROR: www/index.html is missing"; exit 1; }
+          ls -la www
+
+      - name: Create Android project
+        script: |
+          npx cap add android
+          RES=android/app/src/main/res
+          # app icon
+          cp -R android-overlay/res/. $RES/
+          cat > $RES/values/ic_launcher_background.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_launcher_background">#12102A</color>
+          </resources>
+          XML
+          # plain dark launch screen instead of the default Capacitor one
+          find $RES -name "splash.png" -exec cp android-overlay/splash.png {} \;
+
+      - name: Copy web app into Android project
+        script: npx cap sync android
+
+      - name: Build debug APK
+        script: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Verify the app is inside the APK
+        script: |
+          APK=$(ls android/app/build/outputs/apk/debug/*.apk | head -1)
+          echo "Checking $APK"
+          unzip -l "$APK" | grep "assets/public/index.html" \
+            || { echo "ERROR: index.html not in APK (this causes a blank screen)"; exit 1; }
+
+    artifacts:
+      - android/app/build/outputs/apk/debug/*.apk
