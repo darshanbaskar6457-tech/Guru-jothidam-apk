@@ -7,28 +7,70 @@ workflows:
       node: latest
       java: 17
     scripts:
-      - name: Install dependencies
-        script: npm install
-
-      - name: Check web files are present
+      - name: Find and prepare the web app
         script: |
-          test -f www/index.html || { echo "ERROR: www/index.html is missing"; exit 1; }
+          echo "Files in repo:"
+          find . -maxdepth 3 -not -path "./.git/*" -not -path "./node_modules/*" | head -60
+          SRC=$(find . -name index.html -not -path "./node_modules/*" -not -path "./android/*" -not -path "./www/*" | head -1)
+          if [ -n "$SRC" ]; then
+            D=$(dirname "$SRC")
+            mkdir -p www
+            cp "$D"/index.html "$D"/manifest.webmanifest "$D"/sw.js "$D"/icon-192.png "$D"/icon-512.png www/
+          fi
+          test -f www/index.html || { echo "ERROR: index.html not found in the repo. Upload index.html, manifest.webmanifest, sw.js, icon-192.png, icon-512.png next to codemagic.yaml"; exit 1; }
+          # do not register the service worker inside the app
+          sed -i.bak 's|if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js");|if("serviceWorker"in navigator\&\&!window.Capacitor)navigator.serviceWorker.register("sw.js");|' www/index.html
+          rm -f www/index.html.bak
           ls -la www
 
-      - name: Create Android project
+      - name: Create Capacitor config
         script: |
-          npx cap add android
+          cat > package.json <<'JSON'
+          {
+            "name": "guru-jothidam",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^7.0.0",
+              "@capacitor/cli": "^7.0.0",
+              "@capacitor/core": "^7.0.0"
+            }
+          }
+          JSON
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.gurujothidam.app",
+            "appName": "Guru Jothidam",
+            "webDir": "www",
+            "backgroundColor": "#12102a",
+            "android": { "adjustMarginsForEdgeToEdge": "auto" }
+          }
+          JSON
+          npm install
+
+      - name: Create Android project
+        script: npx cap add android
+
+      - name: App icon and launch screen
+        ignore_failure: true
+        script: |
           RES=android/app/src/main/res
-          # app icon
-          cp -R android-overlay/res/. $RES/
+          for spec in mdpi:48:108 hdpi:72:162 xhdpi:96:216 xxhdpi:144:324 xxxhdpi:192:432; do
+            d=${spec%%:*}; rest=${spec#*:}; leg=${rest%%:*}; fg=${rest#*:}
+            sips -z $leg $leg www/icon-512.png --out $RES/mipmap-$d/ic_launcher.png
+            sips -z $leg $leg www/icon-512.png --out $RES/mipmap-$d/ic_launcher_round.png
+            inner=$((fg*76/100))
+            sips -z $inner $inner www/icon-512.png --out /tmp/fg.png
+            sips --padToHeightWidth $fg $fg --padColor 12102A /tmp/fg.png --out $RES/mipmap-$d/ic_launcher_foreground.png
+          done
           cat > $RES/values/ic_launcher_background.xml <<'XML'
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <color name="ic_launcher_background">#12102A</color>
           </resources>
           XML
-          # plain dark launch screen instead of the default Capacitor one
-          find $RES -name "splash.png" -exec cp android-overlay/splash.png {} \;
+          echo 'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGMUEtBiwAaYsIoOWgkAQbgAXO4fJEAAAAAASUVORK5CYII=' | base64 --decode > /tmp/splash.png
+          find $RES -name "splash.png" -exec cp /tmp/splash.png {} \;
 
       - name: Copy web app into Android project
         script: npx cap sync android
